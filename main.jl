@@ -234,6 +234,8 @@ malePPRatio = computePPRatio(malePopPyramid2020,femalePopPyramid2020)
 @assert sum(malePPRatio) < 
     sum(malePopPyramid2020) /( sum(malePopPyramid2020) + sum(femalePopPyramid2020) ) + eps()
 
+# TODO some optional plots / histograms would be nice
+
 # Assumption: 
 # data corresponds to year 2020-07
 # model is simulated till  2020-07 
