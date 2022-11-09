@@ -190,6 +190,27 @@ end
 # a. initially hard-coded 
 # b. later from input files / flags 
 
+
+# loading data/202006PopulationPyramid.csv
+#       columns correspnds to male numbers vs. female numbers 
+#       last row corresponds to population number of age 0 
+#       2nd  row corresponds to population number of age 89
+#       1st  row corresponds to population number of age 90+ 
+#       the male (female) population should sum to 33145709	(33935525) 
+
+using CSV 
+using Tables 
+
+const malePopPyramid2020 = reverse!(CSV.File("./data/202006PopulationPyramid.male.csv", header=0) |> Tables.matrix) 
+@assert sum(malePopPyramid2020) == 33145709 
+@assert length(malePopPyramid2020) == 91 
+
+const femalePopPyramid2020 = reverse!(CSV.File("./data/202006PopulationPyramid.female.csv", header=0) |> Tables.matrix) 
+@assert sum(femalePopPyramid2020) == 33935525 
+@assert length(femalePopPyramid2020) == 91 
+
+
+
 # Step V
 # initially define a cost function (e.g. sum of least squares) 
 # can be also a vector rather than a single value depending on the imperical data 
