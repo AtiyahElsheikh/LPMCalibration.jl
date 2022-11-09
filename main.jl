@@ -46,6 +46,7 @@ module LPMLib
         pars = DemographyPars() 
         # adhoc fix: todo improve
         pars.datapars.datadir =  "$(LPMPATH)/$(pars.datapars.datadir)"  
+        pars.poppars.initialPop = 500 
         pars 
     end
 
@@ -59,7 +60,7 @@ module LPMLib
         using ..LPMLib: LPMPATH, loadModelParameters, addToLoadPath!, loadAndSeedSimulationPars
         include("$(LPMPATH)/mainHelpers.jl")
 
-        export MODEL, MODPARS, SIMPARS, Model 
+        export MODEL, MODPARS, SIMPARS, Model, setupModel 
 
         # simulation parameters defining the 
         const SIMPARS =  loadAndSeedSimulationPars() 
@@ -68,7 +69,7 @@ module LPMLib
         const MODPARS  = loadModelParameters()
 
         # This is a model definition that will be deep copied for every simulation instance 
-        const MODEL = setupModel(MODPARS)
+        const MODEL = setupModel(MODPARS) 
     end # ModelDefinition
     
 end # LPMLib
@@ -150,26 +151,33 @@ function setRandParValueExp(pname,active)
     setParValueExp(pname,active,val)
 end
 
+# TODO subject to improvement, to make the first argument actual rather than string
 setRandParValue!(pname,active) = eval(setRandParValueExp(pname,active))
 
 # establish model parameter sets according to active parameters 
 
-using .LPMLib.ModelDef: Model, MODPARS 
+using .LPMLib.ModelDef: MODPARS, setupModel, Model 
 
 # TODO establish a function that generates random parameters  
 #   need to take care that this makes eval(exp) become local to a function 
 
 using .LPMLib: DemographyPars, SimulationPars
+
 const parameters =  DemographyPars[] 
-const models     =  Model[] 
+# TODO No need to have an array of models if model construction is merged with simulation       
+const models     =  Model[]              
 # const simpars    =  SimulationPars[]   # probably not needed, it is the same across all simulations 
 
+# TODO : this is now only a proof of concept. 
+#        it makes sense to merge this loop with the simulation for loop
 for index in 1:NUMSIMS 
     push!(parameters,deepcopy(MODPARS)) 
     for active in activePars 
         setRandParValue!("parameters[$index]", active)
     end
-    push!(models,deepcopy(MODEL)) 
+    # TODO: deepcopy could be fragile, in this case, model to be constructed here
+    mod = setupModel(parameters[index]) # instead of uncertain deepcopy(MODEL)
+    push!(models,mod) 
     #println(parameters[index].poppars.femaleAgeScaling)
 end
 
