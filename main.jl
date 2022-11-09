@@ -46,6 +46,7 @@ module LPMLib
         pars = DemographyPars() 
         # adhoc fix: todo improve
         pars.datapars.datadir =  "$(LPMPATH)/$(pars.datapars.datadir)"  
+        pars.poppars.initialPop = 500 
         pars 
     end
 
@@ -59,7 +60,7 @@ module LPMLib
         using ..LPMLib: LPMPATH, loadModelParameters, addToLoadPath!, loadAndSeedSimulationPars
         include("$(LPMPATH)/mainHelpers.jl")
 
-        export MODEL, MODPARS, SIMPARS, Model 
+        export MODEL, MODPARS, SIMPARS, Model, setupModel 
 
         # simulation parameters defining the 
         const SIMPARS =  loadAndSeedSimulationPars() 
@@ -68,7 +69,7 @@ module LPMLib
         const MODPARS  = loadModelParameters()
 
         # This is a model definition that will be deep copied for every simulation instance 
-        const MODEL = setupModel(MODPARS)
+        const MODEL = setupModel(MODPARS) 
     end # ModelDefinition
     
 end # LPMLib
@@ -150,26 +151,33 @@ function setRandParValueExp(pname,active)
     setParValueExp(pname,active,val)
 end
 
+# TODO subject to improvement, to make the first argument actual rather than string
 setRandParValue!(pname,active) = eval(setRandParValueExp(pname,active))
 
 # establish model parameter sets according to active parameters 
 
-using .LPMLib.ModelDef: Model, MODPARS 
+using .LPMLib.ModelDef: MODPARS, setupModel, Model 
 
 # TODO establish a function that generates random parameters  
 #   need to take care that this makes eval(exp) become local to a function 
 
 using .LPMLib: DemographyPars, SimulationPars
+
 const parameters =  DemographyPars[] 
-const models     =  Model[] 
+# TODO No need to have an array of models if model construction is merged with simulation       
+const models     =  Model[]              
 # const simpars    =  SimulationPars[]   # probably not needed, it is the same across all simulations 
 
+# TODO : this is now only a proof of concept. 
+#        it makes sense to merge this loop with the simulation for loop
 for index in 1:NUMSIMS 
     push!(parameters,deepcopy(MODPARS)) 
     for active in activePars 
         setRandParValue!("parameters[$index]", active)
     end
-    push!(models,deepcopy(MODEL)) 
+    # TODO: deepcopy could be fragile, in this case, model to be constructed here
+    mod = setupModel(parameters[index]) # instead of uncertain deepcopy(MODEL)
+    push!(models,mod) 
     #println(parameters[index].poppars.femaleAgeScaling)
 end
 
@@ -177,14 +185,63 @@ end
 # Step IV
 # =======
 # Establish / load data to which the model definition is going to be calibrated 
-#   & placing the imperical data as well as other related stuffs 
-#   & which model variables do they correspond to 
+#   & placing the imperical data as well as other related stuffs (OK)
+#   & which model variables do they correspond to (N.A.)
 # a. initially hard-coded 
-# b. later from input files / flags 
+# b. initially Population Pyramid data 
+# c. later from input files / flags and other data & fitness indices  
+
+
+# loading data/202006PopulationPyramid.csv
+#       columns correspnds to male numbers vs. female numbers 
+#       last row corresponds to population number of age 0 
+#       2nd  row corresponds to population number of age 89
+#       1st  row corresponds to population number of age 90+ 
+#       the male (female) population should sum to 33145709	(33935525) 
+
+using CSV 
+using Tables 
+
+const malePopPyramid2020 = reverse!(CSV.File("./data/202006PopulationPyramid.male.csv", header=0) |> Tables.matrix) 
+@assert sum(malePopPyramid2020) == 33145709 
+@assert size(malePopPyramid2020) == (91,1)  
+
+const femalePopPyramid2020 = reverse!(CSV.File("./data/202006PopulationPyramid.female.csv", header=0) |> Tables.matrix) 
+@assert sum(femalePopPyramid2020) == 33935525 
+@assert size(femalePopPyramid2020) == (91,1) 
+
 
 # Step V
 # initially define a cost function (e.g. sum of least squares) 
 # can be also a vector rather than a single value depending on the imperical data 
+
+"
+Compute population ratio for each age class
+    assuming that arguments correspond to one dimensional matrix of identical lengths 
+"  
+function computePPRatio(agemale,agefemale)
+    @assert( length(agefemale) == length(agemale))
+    res = Vector{Float64}(undef,length(agemale))
+    npop = sum(agefemale) + sum(agemale)
+    for index in 1:length(agemale) 
+       res[index] =  agemale[index] / npop 
+    end
+    res 
+end 
+
+malePPRatio = computePPRatio(malePopPyramid2020,femalePopPyramid2020)
+
+@assert sum(malePPRatio) < 
+    sum(malePopPyramid2020) /( sum(malePopPyramid2020) + sum(femalePopPyramid2020) ) + eps()
+
+# TODO some optional plots / histograms would be nice
+
+# Assumption: 
+# data corresponds to year 2020-07
+# model is simulated till  2020-07 
+function evaluatePPIndex(ppRatio1,ppRatio2::Vector{Float64}) 
+    # compute Population pyramid 
+end 
 
 # Step VI 
 # conduct calibration multiple simulation
