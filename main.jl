@@ -185,10 +185,11 @@ end
 # Step IV
 # =======
 # Establish / load data to which the model definition is going to be calibrated 
-#   & placing the imperical data as well as other related stuffs 
-#   & which model variables do they correspond to 
+#   & placing the imperical data as well as other related stuffs (OK)
+#   & which model variables do they correspond to (N.A.)
 # a. initially hard-coded 
-# b. later from input files / flags 
+# b. initially Population Pyramid data 
+# c. later from input files / flags and other data & fitness indices  
 
 
 # loading data/202006PopulationPyramid.csv
@@ -203,17 +204,42 @@ using Tables
 
 const malePopPyramid2020 = reverse!(CSV.File("./data/202006PopulationPyramid.male.csv", header=0) |> Tables.matrix) 
 @assert sum(malePopPyramid2020) == 33145709 
-@assert length(malePopPyramid2020) == 91 
+@assert size(malePopPyramid2020) == (91,1)  
 
 const femalePopPyramid2020 = reverse!(CSV.File("./data/202006PopulationPyramid.female.csv", header=0) |> Tables.matrix) 
 @assert sum(femalePopPyramid2020) == 33935525 
-@assert length(femalePopPyramid2020) == 91 
-
+@assert size(femalePopPyramid2020) == (91,1) 
 
 
 # Step V
 # initially define a cost function (e.g. sum of least squares) 
 # can be also a vector rather than a single value depending on the imperical data 
+
+"
+Compute population ratio for each age class
+    assuming that arguments correspond to one dimensional matrix of identical lengths 
+"  
+function computePPRatio(agemale,agefemale)
+    @assert( length(agefemale) == length(agemale))
+    res = Vector{Float64}(undef,length(agemale))
+    npop = sum(agefemale) + sum(agemale)
+    for index in 1:length(agemale) 
+       res[index] =  agemale[index] / npop 
+    end
+    res 
+end 
+
+malePPRatio = computePPRatio(malePopPyramid2020,femalePopPyramid2020)
+
+@assert sum(malePPRatio) < 
+    sum(malePopPyramid2020) /( sum(malePopPyramid2020) + sum(femalePopPyramid2020) ) + eps()
+
+# Assumption: 
+# data corresponds to year 2020-07
+# model is simulated till  2020-07 
+function evaluatePPIndex(ppRatio1,ppRatio2::Vector{Float64}) 
+    # compute Population pyramid 
+end 
 
 # Step VI 
 # conduct calibration multiple simulation
