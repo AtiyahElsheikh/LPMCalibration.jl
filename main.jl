@@ -36,8 +36,7 @@ module LPMLib
     #   could be made as flags but not necessarily all (e.g. matrices)
     #   to make it possible to load from an input file 
     function loadAndSeedSimulationPars() 
-        simPars = SimulationPars() # default values  
-        simPars.seed = 0           # Every execution will be different 
+        simPars = SimulationPars(seed=0, finishTime = 2020 + 6 // 12) # default values  
         seed!(simPars)             
         simPars 
     end 
@@ -60,7 +59,7 @@ module LPMLib
         using ..LPMLib: LPMPATH, loadModelParameters, addToLoadPath!, loadAndSeedSimulationPars
         include("$(LPMPATH)/mainHelpers.jl")
 
-        export MODEL, MODPARS, SIMPARS, Model, setupModel 
+        export MODPARS, SIMPARS, Model, setupModel 
 
         # simulation parameters defining the 
         const SIMPARS =  loadAndSeedSimulationPars() 
@@ -69,7 +68,7 @@ module LPMLib
         const MODPARS  = loadModelParameters()
 
         # This is a model definition that will be deep copied for every simulation instance 
-        const MODEL = setupModel(MODPARS) 
+        # const MODEL = setupModel(MODPARS) 
     end # ModelDefinition
     
 end # LPMLib
@@ -133,56 +132,38 @@ const activePars = [femaleAgeScaling, maleAgeScaling, femaleMortalityBias, maleM
 
 # Step III 
 # ========
-# generate a set of models and parameters for multiple simulations 
+# generate a set of parameters for multiple simulations 
 
 # TODO configuring using flags / input files 
 const NUMSIMS = 100    # number of simulations 
 
-function setParValueExp(pname::String, active::ActiveParameter{ValType}, val::ValType) where ValType  
-    @assert val >= active.lowerbound && val <= active.upperbound
-    gr = active.group 
-    id = active.name  
-    Meta.parse("$(pname).$(gr).$(id) = $(val)")
-end 
+setParValue!(parameter,activePar,val) = 
+    setfield!( getfield(parameter,activePar.group), activePar.name, val  )
+
 
 using Distributions: Uniform 
-function setRandParValueExp(pname,active) 
-    val = rand(Uniform(active.lowerbound,active.upperbound))
-    setParValueExp(pname,active,val)
-end
-
-# TODO subject to improvement, to make the first argument actual rather than string
-setRandParValue!(pname,active) = eval(setRandParValueExp(pname,active))
+setRandParValue!(parameter,activePar) = 
+    setParValue!(parameter,activePar, 
+                    rand(Uniform(activePar.lowerbound,activePar.upperbound)))
 
 # establish model parameter sets according to active parameters 
 
-using .LPMLib.ModelDef: MODPARS, setupModel, Model 
-
-# TODO establish a function that generates random parameters  
-#   need to take care that this makes eval(exp) become local to a function 
-
-using .LPMLib: DemographyPars, SimulationPars
+using .LPMLib: DemographyPars
+using .LPMLib.ModelDef: MODPARS
 
 const parameters =  DemographyPars[] 
-# TODO No need to have an array of models if model construction is merged with simulation       
-const models     =  Model[]              
-# const simpars    =  SimulationPars[]   # probably not needed, it is the same across all simulations 
 
-# TODO : this is now only a proof of concept. 
-#        it makes sense to merge this loop with the simulation for loop
+# TODO: can be merged with the simulation loop 
 for index in 1:NUMSIMS 
     push!(parameters,deepcopy(MODPARS)) 
     for active in activePars 
-        setRandParValue!("parameters[$index]", active)
+        setRandParValue!(parameters[index],active)
     end
-    # TODO: deepcopy could be fragile, in this case, model to be constructed here
-    mod = setupModel(parameters[index]) # instead of uncertain deepcopy(MODEL)
-    push!(models,mod) 
-    #println(parameters[index].poppars.femaleAgeScaling)
+    # println(parameters[index].poppars.femaleAgeScaling)
 end
 
  
-# Step IV
+# Step IV (OK)
 # =======
 # Establish / load data to which the model definition is going to be calibrated 
 #   & placing the imperical data as well as other related stuffs (OK)
@@ -214,34 +195,37 @@ const femalePopPyramid2020 = reverse!(CSV.File("./data/202006PopulationPyramid.f
 # Step V
 # initially define a cost function (e.g. sum of least squares) 
 # can be also a vector rather than a single value depending on the imperical data 
-
 "
 Compute population ratio for each age class
     assuming that arguments correspond to one dimensional matrix of identical lengths 
 "  
-function computePPRatio(agemale,agefemale)
-    @assert( length(agefemale) == length(agemale))
-    res = Vector{Float64}(undef,length(agemale))
-    npop = sum(agefemale) + sum(agemale)
-    for index in 1:length(agemale) 
-       res[index] =  agemale[index] / npop 
-    end
-    res 
+function computePPRatio(ppGender1,ppGender2)
+    @assert( length(ppGender1) == length(ppGender2))
+    res1 = Vector{Float64}(undef,length(ppGender1))
+    res2 = Vector{Float64}(undef,length(ppGender1))
+    npop = sum(ppGender1) + sum(ppGender2)
+    res1 = ppGender1 / npop 
+    res2 = ppGender2 / npop 
+    res1,res2  
 end 
 
-malePPRatio = computePPRatio(malePopPyramid2020,femalePopPyramid2020)
+malePPRatio, femalePPRatio = computePPRatio(malePopPyramid2020,femalePopPyramid2020)
 
-@assert sum(malePPRatio) < 
-    sum(malePopPyramid2020) /( sum(malePopPyramid2020) + sum(femalePopPyramid2020) ) + eps()
+@assert  1.0 - eps() < sum(malePPRatio) + sum(femalePPRatio) < 1 + eps() 
+@assert sum(malePopPyramid2020) /( sum(malePopPyramid2020) + sum(femalePopPyramid2020) ) - eps() <
+            sum(malePPRatio) < 
+            sum(malePopPyramid2020) /( sum(malePopPyramid2020) + sum(femalePopPyramid2020) ) + eps()
 
-# TODO some optional plots / histograms would be nice
+# TODO some optional plots / histograms
 
-# Assumption: 
-# data corresponds to year 2020-07
-# model is simulated till  2020-07 
-function evaluatePPIndex(ppRatio1,ppRatio2::Vector{Float64}) 
-    # compute Population pyramid 
-end 
+""" 
+Assumption: 
+    data and simulation data has the same length and 
+    they corresponds to the same year 
+""" 
+ppVecIndex(ppRatioData,ppRatioSim::Vector{Float64}) = 
+    ((ppRatioData .- ppRatioSim) ./ ppRatioData) .^ 2  
+
 
 # Step VI 
 # conduct calibration multiple simulation
@@ -249,6 +233,14 @@ end
 # b. Other suggested packatges, e.g. hypercube, differential evolution .. 
 # ... 
 
+using .LPMLib.ModelDef: setupModel
+
+const model = setupModel(MODPARS)
+
+for index in 1:NUMSIMS 
+    model = setupModel(parameters[index]) 
+
+end
 
 
 
