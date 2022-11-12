@@ -1,10 +1,11 @@
 """
 Initial draft of calibrating an LPM-based model
 It is assumed that LoneParentsModel.jl is located in the following relative path ../LoneParentsModel.jl
-This version works with LoneParentsModel.jl version TAG-Verion 0.6.0
-                                                    =================
-later version of LoneParentsModel may be not compatible (simply switch to TAG-Version) 
-can be directly executing as 
+This version works with LoneParentsModel.jl version TAG 0.6.1
+                                                    =========
+later version of LoneParentsModel is probably not compatible (simply switch to TAG-Version) 
+
+This script can be directly executing as 
 # julia main.jl 
 or within REPL as 
 julia> include("main.jl")
@@ -19,10 +20,8 @@ julia> include("main.jl")
 # Viewing LPM as a library    
 module LPMLib
     # export VERSION
-    export LPMPATH 
+    export LPMPATH
     export loadAndSeedSimulationPars, loadModelParameters
-
-    # const VERSION = r"V0.6.0"   
     
     include("./utilities.jl")
     const LPMPATH = "../LoneParentsModel.jl"
@@ -30,14 +29,15 @@ module LPMLib
     addToLoadPath!("$(LPMPATH)/src")
     addToLoadPath!("$(LPMPATH)/src/generic")
 
+    using LPM: LPMVERSION 
     using LPM.ParamTypes: SimulationPars, seed!, DemographyPars
+    using XAgents: alive, isFemale, isMale 
 
     # TODO some significant (simulation & model) parameters 
     #   could be made as flags but not necessarily all (e.g. matrices)
     #   to make it possible to load from an input file 
     function loadAndSeedSimulationPars() 
-        simPars = SimulationPars() # default values  
-        simPars.seed = 0           # Every execution will be different 
+        simPars = SimulationPars(seed=0, finishTime = 2020 + 6 // 12) # default values  
         seed!(simPars)             
         simPars 
     end 
@@ -46,7 +46,7 @@ module LPMLib
         pars = DemographyPars() 
         # adhoc fix: todo improve
         pars.datapars.datadir =  "$(LPMPATH)/$(pars.datapars.datadir)"  
-        pars.poppars.initialPop = 500 
+        pars.poppars.initialPop = 5000 
         pars 
     end
 
@@ -57,26 +57,46 @@ module LPMLib
 #       every time the model is calibrated a deep copy instance is employed  
 
     module ModelDef
-        using ..LPMLib: LPMPATH, loadModelParameters, addToLoadPath!, loadAndSeedSimulationPars
+        using ..LPMLib: LPMPATH, loadModelParameters, addToLoadPath!, loadAndSeedSimulationPars, 
+                        alive, isFemale, isMale
         include("$(LPMPATH)/mainHelpers.jl")
 
-        export MODEL, MODPARS, SIMPARS, Model, setupModel 
+        #export MODPARS, 
+        export SIMPARS, Model, setupModel, runModel!
+        export alivePeople, females, yearsold  
 
-        # simulation parameters defining the 
+        # simulation parameters used for all simulations 
         const SIMPARS =  loadAndSeedSimulationPars() 
 
-        # model parameter definitions that will be variated from a simulation to another 
-        const MODPARS  = loadModelParameters()
-
-        # This is a model definition that will be deep copied for every simulation instance 
-        const MODEL = setupModel(MODPARS) 
+        # help functions for fitness computations 
+        alivePeople(model) = [person for person in model.pop if alive(person)] 
+        females(model) = [fem for fem in alivePeople(model) if isFemale(fem)]
+        males(model) = [m for m in alivePeople(model) if isMale(m)]
+        # alive males of age a 
+        males(model,a::Int) = [amale for amale in males(model) if yearsold(amale) == a]
+        females(model,a::Int) = [afemale for afemale in females(model) if yearsold(afemale) == a]
+        
+        """
+        population Pyramid of the available alive population within the model 
+        return PP of males and females 
+        """
+        function populationPyramid(model)
+            ppf = Vector{Int}(undef,91)
+            ppm = Vector{Int}(undef,91); 
+            for index in 1:90 
+                ppm[index] = length(males(model,index - 1))    
+                ppf[index] = length(females(model,index - 1))    
+            end
+            ppm[91] = length(males(model)) - sum(ppm[1:90])
+            ppf[91] = length(females(model)) - sum(ppf[1:90])
+            ppm,ppf 
+        end
+        
     end # ModelDefinition
     
 end # LPMLib
 
-# if the above package is moved to LoneParentsModel.jl 
-# @assert LoneParentsModel.VERSION == r"V0.6.0"  
-
+@assert LPMLib.LPMVERSION == r"0.6.1"  
 
 # Step III 
 # ========
@@ -133,56 +153,23 @@ const activePars = [femaleAgeScaling, maleAgeScaling, femaleMortalityBias, maleM
 
 # Step III 
 # ========
-# generate a set of models and parameters for multiple simulations 
+# generate a set of parameters for multiple simulations 
+# TODO: can be merged with the simulation loop 
 
 # TODO configuring using flags / input files 
-const NUMSIMS = 100    # number of simulations 
+const NUMSIMS = 10   # number of simulations 
 
-function setParValueExp(pname::String, active::ActiveParameter{ValType}, val::ValType) where ValType  
-    @assert val >= active.lowerbound && val <= active.upperbound
-    gr = active.group 
-    id = active.name  
-    Meta.parse("$(pname).$(gr).$(id) = $(val)")
-end 
+setParValue!(parameter,activePar,val) = 
+    setfield!( getfield(parameter,activePar.group), activePar.name, val  )
+
 
 using Distributions: Uniform 
-function setRandParValueExp(pname,active) 
-    val = rand(Uniform(active.lowerbound,active.upperbound))
-    setParValueExp(pname,active,val)
-end
+setRandParValue!(parameter,activePar) = 
+    setParValue!(parameter,activePar, 
+                    rand(Uniform(activePar.lowerbound,activePar.upperbound)))
 
-# TODO subject to improvement, to make the first argument actual rather than string
-setRandParValue!(pname,active) = eval(setRandParValueExp(pname,active))
 
-# establish model parameter sets according to active parameters 
-
-using .LPMLib.ModelDef: MODPARS, setupModel, Model 
-
-# TODO establish a function that generates random parameters  
-#   need to take care that this makes eval(exp) become local to a function 
-
-using .LPMLib: DemographyPars, SimulationPars
-
-const parameters =  DemographyPars[] 
-# TODO No need to have an array of models if model construction is merged with simulation       
-const models     =  Model[]              
-# const simpars    =  SimulationPars[]   # probably not needed, it is the same across all simulations 
-
-# TODO : this is now only a proof of concept. 
-#        it makes sense to merge this loop with the simulation for loop
-for index in 1:NUMSIMS 
-    push!(parameters,deepcopy(MODPARS)) 
-    for active in activePars 
-        setRandParValue!("parameters[$index]", active)
-    end
-    # TODO: deepcopy could be fragile, in this case, model to be constructed here
-    mod = setupModel(parameters[index]) # instead of uncertain deepcopy(MODEL)
-    push!(models,mod) 
-    #println(parameters[index].poppars.femaleAgeScaling)
-end
-
- 
-# Step IV
+# Step IV (OK)
 # =======
 # Establish / load data to which the model definition is going to be calibrated 
 #   & placing the imperical data as well as other related stuffs (OK)
@@ -192,6 +179,7 @@ end
 # c. later from input files / flags and other data & fitness indices  
 
 
+
 # loading data/202006PopulationPyramid.csv
 #       columns correspnds to male numbers vs. female numbers 
 #       last row corresponds to population number of age 0 
@@ -199,57 +187,114 @@ end
 #       1st  row corresponds to population number of age 90+ 
 #       the male (female) population should sum to 33145709	(33935525) 
 
+
 using CSV 
 using Tables 
 
-const malePopPyramid2020 = reverse!(CSV.File("./data/202006PopulationPyramid.male.csv", header=0) |> Tables.matrix) 
+const malePopPyramid2020 = 
+    reverse!(dropdims(
+                CSV.File("./data/202006PopulationPyramid.male.csv", header=0) |> Tables.matrix,
+                dims=2)) 
 @assert sum(malePopPyramid2020) == 33145709 
-@assert size(malePopPyramid2020) == (91,1)  
+@assert length(malePopPyramid2020) == 91  
 
-const femalePopPyramid2020 = reverse!(CSV.File("./data/202006PopulationPyramid.female.csv", header=0) |> Tables.matrix) 
+const femalePopPyramid2020 = 
+    reverse!(dropdims(
+                CSV.File("./data/202006PopulationPyramid.female.csv", header=0) |> Tables.matrix,
+                dims = 2)) 
 @assert sum(femalePopPyramid2020) == 33935525 
-@assert size(femalePopPyramid2020) == (91,1) 
+@assert length(femalePopPyramid2020) == 91 
 
 
-# Step V
+# Step V (Ok / subject to validation)
 # initially define a cost function (e.g. sum of least squares) 
 # can be also a vector rather than a single value depending on the imperical data 
-
 "
 Compute population ratio for each age class
     assuming that arguments correspond to one dimensional matrix of identical lengths 
 "  
-function computePPRatio(agemale,agefemale)
-    @assert( length(agefemale) == length(agemale))
-    res = Vector{Float64}(undef,length(agemale))
-    npop = sum(agefemale) + sum(agemale)
-    for index in 1:length(agemale) 
-       res[index] =  agemale[index] / npop 
-    end
-    res 
+function ppRatio(ppGender1,ppGender2)
+    @assert( length(ppGender1) == length(ppGender2))
+    res1 = Vector{Float64}(undef,length(ppGender1))
+    res2 = Vector{Float64}(undef,length(ppGender1))
+    npop = sum(ppGender1) + sum(ppGender2)
+    res1 = ppGender1 / npop 
+    res2 = ppGender2 / npop 
+    res1,res2  
 end 
 
-malePPRatio = computePPRatio(malePopPyramid2020,femalePopPyramid2020)
+const malePPRatio2020, femalePPRatio2020 = ppRatio(malePopPyramid2020,femalePopPyramid2020)
 
-@assert sum(malePPRatio) < 
-    sum(malePopPyramid2020) /( sum(malePopPyramid2020) + sum(femalePopPyramid2020) ) + eps()
+@assert  1.0 - eps() < sum(malePPRatio2020) + sum(femalePPRatio2020) < 1 + eps() 
+@assert sum(malePopPyramid2020) /( sum(malePopPyramid2020) + sum(femalePopPyramid2020) ) - eps() <
+            sum(malePPRatio2020) < 
+            sum(malePopPyramid2020) /( sum(malePopPyramid2020) + sum(femalePopPyramid2020) ) + eps()
 
-# TODO some optional plots / histograms would be nice
+# TODO some optional plots / histograms
 
-# Assumption: 
-# data corresponds to year 2020-07
-# model is simulated till  2020-07 
-function evaluatePPIndex(ppRatio1,ppRatio2::Vector{Float64}) 
-    # compute Population pyramid 
-end 
+""" 
+Assumption: 
+    data and simulation data has the same length and 
+    they correspond to the same year 
+""" 
+ppVecIndex(ppRatioData,ppRatioSim::Vector{Float64}) = 
+    ( (ppRatioData .- ppRatioSim) ./ ppRatioData) .^ 2  
 
-# Step VI 
+ppindex(ppVIndex1,ppVIndex2) = sum(ppVIndex1) + sum(ppVindex2)
+
+
 # conduct calibration multiple simulation
 # a. initially brute-force naive technique 
 # b. Other suggested packatges, e.g. hypercube, differential evolution .. 
 # ... 
 
+using .LPMLib: loadModelParameters
+using .LPMLib.ModelDef: SIMPARS,
+            setupModel, runModel!, populationPyramid,
+            alivePeople, females  
 
+const parameters =  loadModelParameters()
+const model = setupModel(parameters)
 
+bestPPIndex = Inf
+bestParSet = parameters 
+
+# TODO merge parameter construction with fitness computations 
+for index in 1:NUMSIMS 
+    global bestPPIndex, bestParSet
+
+    # new parameter set 
+    for active in activePars 
+        setRandParValue!(parameters,active)
+    end
+    # println(parameters[index].poppars.femaleAgeScaling)
+
+    model = setupModel(parameters) 
+    @time runModel!(model,SIMPARS,parameters)
+
+    # Evaluate PP index for each run 
+    #= TODO associate the following with Logging 
+    npop     = length(alivePeople(model))
+    nfemales = length(females(model))
+    nmales   = npop - nfemales 
+    
+    println("# of pop: $(length(alivePeople(model))) out of which $(length(females(model))) females") 
+    =# 
+
+    malePPSim,femalePPSim = populationPyramid(model)
+    femalePPRatioSim, malePPRatioSim = ppRatio(femalePPSim,malePPSim)
+    malePPVIndex  =  ppVecIndex(malePPRatio2020,malePPRatioSim)
+    femalePPVIndex = ppVecIndex(femalePPRatio2020, femalePPRatioSim)
+    currppindex = sum(malePPVIndex) + sum(femalePPVIndex)
+
+    println("Iteration $(index) : pp fitness: $(currppindex)")
+
+    if currppindex < bestPPIndex
+        bestPPIndex = currppindex
+        bestParSet  = parameters
+    end 
+end
+
+println("best parameter set obtained pp fitness of $bestPPIndex")
 
 
