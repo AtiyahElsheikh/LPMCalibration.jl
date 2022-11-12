@@ -91,7 +91,7 @@ module LPMLib
             ppf[91] = length(females(model)) - sum(ppf[1:90])
             ppm,ppf 
         end
-
+        
     end # ModelDefinition
     
 end # LPMLib
@@ -168,7 +168,7 @@ setRandParValue!(parameter,activePar) =
     setParValue!(parameter,activePar, 
                     rand(Uniform(activePar.lowerbound,activePar.upperbound)))
 
- 
+
 # Step IV (OK)
 # =======
 # Establish / load data to which the model definition is going to be calibrated 
@@ -179,12 +179,14 @@ setRandParValue!(parameter,activePar) =
 # c. later from input files / flags and other data & fitness indices  
 
 
+
 # loading data/202006PopulationPyramid.csv
 #       columns correspnds to male numbers vs. female numbers 
 #       last row corresponds to population number of age 0 
 #       2nd  row corresponds to population number of age 89
 #       1st  row corresponds to population number of age 90+ 
 #       the male (female) population should sum to 33145709	(33935525) 
+
 
 using CSV 
 using Tables 
@@ -241,7 +243,6 @@ ppVecIndex(ppRatioData,ppRatioSim::Vector{Float64}) =
 ppindex(ppVIndex1,ppVIndex2) = sum(ppVIndex1) + sum(ppVindex2)
 
 
-# Step VI (OK)
 # conduct calibration multiple simulation
 # a. initially brute-force naive technique 
 # b. Other suggested packatges, e.g. hypercube, differential evolution .. 
